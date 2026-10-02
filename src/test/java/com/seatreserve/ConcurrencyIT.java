@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -35,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Needs Docker (Testcontainers). Run with `./mvnw verify`. */
 @Tag("it")
 @Testcontainers
+@AutoConfigureObservability // tests default to a no-op registry; we want the real /actuator/prometheus
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ConcurrencyIT {
     @Container
@@ -65,6 +67,8 @@ class ConcurrencyIT {
         String show = createShow(List.of("A11", "A12", "A13"));
         int buyers = 300;
         List<String> tokens = IntStream.range(0, buyers).mapToObj(i -> token("storm-" + i)).toList();
+        double confirmedBefore = metric("reservations_confirmed_total", "");
+        double takenBefore = metric("reservations_declined_total", "reason=\"seat-taken\"");
 
         var codes = fireAll(buyers, i -> post("/shows/" + show + "/reserve", tokens.get(i),
                 "{\"seats\":[\"A12\"],\"idempotency_key\":\"k-" + i + "\"}").statusCode());
@@ -72,6 +76,12 @@ class ConcurrencyIT {
         assertEquals(1, count(codes, 201), "exactly one buyer wins seat A12: " + tally(codes));
         assertEquals(buyers - 1, count(codes, 409), "everyone else gets a clean 409: " + tally(codes));
         assertInvariant(show, 3, 2, 0, 1); // 3 seats: A12 confirmed to the winner, A11/A13 untouched
+
+        // metrics must reconcile with what the API reported and with the DB state
+        assertEquals(1, metric("reservations_confirmed_total", "") - confirmedBefore, "confirmed counter");
+        assertEquals(buyers - 1, metric("reservations_declined_total", "reason=\"seat-taken\"") - takenBefore,
+                "seat-taken counter");
+        assertEquals(2, metric("seats_available", "show_id=\"" + show + "\""), "seats_available gauge");
     }
 
     @Test
@@ -229,6 +239,17 @@ class ConcurrencyIT {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** Sums matching series from the Prometheus text endpoint (0 if the series does not exist yet). */
+    double metric(String name, String labelFragment) {
+        double sum = 0;
+        for (String line : get("/actuator/prometheus").body().split("\n")) {
+            if (!line.startsWith(name + " ") && !line.startsWith(name + "{")) continue;
+            if (!labelFragment.isEmpty() && !line.contains(labelFragment)) continue;
+            sum += Double.parseDouble(line.substring(line.lastIndexOf(' ') + 1));
+        }
+        return sum;
     }
 
     static int count(List<Integer> codes, int code) {

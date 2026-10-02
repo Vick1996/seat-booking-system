@@ -1,5 +1,6 @@
 package com.seatreserve.api;
 
+import com.seatreserve.config.SeatMetrics;
 import com.seatreserve.domain.DomainException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,8 +24,15 @@ import java.util.Map;
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    private final SeatMetrics metrics;
+
+    public GlobalExceptionHandler(SeatMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     @ExceptionHandler(DomainException.class)
     ResponseEntity<Map<String, Object>> domain(DomainException e) {
+        metrics.declined(e.reason());
         return body(e.status(), e.reason(), e.getMessage());
     }
 
@@ -34,6 +42,7 @@ public class GlobalExceptionHandler {
             DeadlockLoserDataAccessException.class})
     ResponseEntity<Map<String, Object>> overloaded(Exception e) {
         log.warn("shedding load as 429: {}", e.toString());
+        metrics.declined("overloaded");
         return body(HttpStatus.TOO_MANY_REQUESTS, "overloaded", "server is busy, retry with the same idempotency key");
     }
 

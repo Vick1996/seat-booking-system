@@ -20,8 +20,16 @@ spring:
       # clean 409, not a 429. These bounds are the last resort that sheds load as 429 (never 5xx).
       connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:20000}
       connection-init-sql: SET lock_timeout='10s'; SET statement_timeout='30s'
+      data-source-properties:
+        connectTimeout: 5   # seconds; a dead host must not hang a connect
+        socketTimeout: 60   # seconds; above statement_timeout, so only a truly hung socket trips it
   flyway:
     enabled: true
+
+logging:
+  structured:
+    format:
+      console: ecs # JSON; MDC (request_id, user_id) is included automatically
 
 management:
   endpoints:
@@ -36,7 +44,7 @@ management:
       group:
         # Readiness actually checks the DB and fails closed (503) when it is unreachable.
         readiness:
-          include: readinessState,db
+          include: readinessState,seatDb
 
 seat:
   jwt-secret: ${SEAT_JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}

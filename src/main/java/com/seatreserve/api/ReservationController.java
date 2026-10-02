@@ -2,6 +2,7 @@ package com.seatreserve.api;
 
 import com.seatreserve.config.AuthFilter;
 import com.seatreserve.config.Principal;
+import com.seatreserve.config.SeatMetrics;
 import com.seatreserve.domain.ReservationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,9 +23,11 @@ public class ReservationController {
     }
 
     private final ReservationService reservations;
+    private final SeatMetrics metrics;
 
-    public ReservationController(ReservationService reservations) {
+    public ReservationController(ReservationService reservations, SeatMetrics metrics) {
         this.reservations = reservations;
+        this.metrics = metrics;
     }
 
     @PostMapping("/shows/{id}/reserve")
@@ -34,6 +37,9 @@ public class ReservationController {
                                         @RequestBody ReserveRequest req) {
         String key = headerKey != null ? headerKey : req.idempotencyKey();
         var result = reservations.reserve(who.userId(), id, req.seats(), key);
+        // counted here, after the transaction has committed
+        if (result.replay()) metrics.declined("idempotent-replay");
+        else metrics.confirmed();
         // 201 for a new reservation; a replay is 200 so "exactly one 201 per seat" stays true under retries
         return ResponseEntity.status(result.replay() ? HttpStatus.OK : HttpStatus.CREATED)
                 .body(Body.of(result.reservation()));

@@ -2,6 +2,7 @@ package com.seatreserve.api;
 
 import com.seatreserve.config.AuthFilter;
 import com.seatreserve.config.Principal;
+import com.seatreserve.config.SeatMetrics;
 import com.seatreserve.domain.DomainException;
 import com.seatreserve.domain.ShowService;
 import org.springframework.http.HttpStatus;
@@ -22,9 +23,11 @@ public class ShowController {
     }
 
     private final ShowService shows;
+    private final SeatMetrics metrics;
 
-    public ShowController(ShowService shows) {
+    public ShowController(ShowService shows, SeatMetrics metrics) {
         this.shows = shows;
+        this.metrics = metrics;
     }
 
     @PostMapping("/shows")
@@ -33,7 +36,9 @@ public class ShowController {
                                        @RequestBody CreateShow req) {
         if (!who.admin()) throw DomainException.forbidden("admin-only", "admin token required");
         if (req.pricePaise() == null) throw DomainException.bad("invalid-price", "price_paise is required");
-        return shows.create(req.name(), req.seats(), req.pricePaise(), req.perUserLimit());
+        var show = shows.create(req.name(), req.seats(), req.pricePaise(), req.perUserLimit());
+        metrics.trackShow(show.id()); // after commit, so the gauge never reads a half-created show
+        return show;
     }
 
     @GetMapping("/shows/{id}")
