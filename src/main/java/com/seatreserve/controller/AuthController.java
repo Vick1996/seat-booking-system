@@ -1,22 +1,20 @@
-package com.seatreserve.api;
+package com.seatreserve.controller;
 
 import com.seatreserve.config.JwtService;
 import com.seatreserve.config.SeatProperties;
-import com.seatreserve.domain.DomainException;
+import com.seatreserve.dto.TokenRequest;
+import com.seatreserve.exception.DomainException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Map;
 
 /** Dev token mint. A real deployment would sit behind an identity provider. */
 @RestController
 public class AuthController {
-    public record TokenRequest(String userId, String adminKey) {
-    }
-
     private final JwtService jwt;
     private final SeatProperties props;
 

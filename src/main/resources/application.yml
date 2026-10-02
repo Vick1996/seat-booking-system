@@ -5,6 +5,9 @@ server:
 spring:
   jackson:
     property-naming-strategy: SNAKE_CASE
+    deserialization:
+      # 100.5 for an integer field must be rejected, not silently truncated to 100 (money is paise)
+      accept-float-as-int: false
   threads:
     virtual:
       enabled: true

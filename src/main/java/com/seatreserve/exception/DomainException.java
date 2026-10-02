@@ -1,8 +1,8 @@
-package com.seatreserve.domain;
+package com.seatreserve.exception;
 
 import org.springframework.http.HttpStatus;
 
-/** A business outcome with a 4xx status — a decline, never a server error. */
+/** A business outcome with a 4xx status: a decline, never a server error. */
 public class DomainException extends RuntimeException {
     private final HttpStatus status;
     private final String reason;
