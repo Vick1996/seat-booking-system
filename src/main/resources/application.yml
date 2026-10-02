@@ -9,8 +9,8 @@ spring:
     virtual:
       enabled: true
   datasource:
-    # Render supplies DATABASE_URL-style parts; compose/local use the defaults below.
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/seats}
+    # SPRING_DATASOURCE_URL wins (compose). Render only exposes host/port/name, so build the JDBC URL.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:seats}}
     username: ${SPRING_DATASOURCE_USERNAME:seats}
     password: ${SPRING_DATASOURCE_PASSWORD:seats}
     hikari:

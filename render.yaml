@@ -1,0 +1,30 @@
+# Render Blueprint: New > Blueprint > pick this repo. Free web service + free Postgres.
+databases:
+  - name: seats-db
+    plan: free
+    databaseName: seats
+    user: seats
+
+services:
+  - type: web
+    name: seat-reservation
+    runtime: docker
+    plan: free
+    # Readiness checks the DB and fails closed; Render only routes traffic once it is 200.
+    healthCheckPath: /actuator/health/readiness
+    envVars:
+      - key: DB_HOST
+        fromDatabase: { name: seats-db, property: host }
+      - key: DB_PORT
+        fromDatabase: { name: seats-db, property: port }
+      - key: DB_NAME
+        fromDatabase: { name: seats-db, property: database }
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase: { name: seats-db, property: user }
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase: { name: seats-db, property: password }
+      - key: SEAT_JWT_SECRET
+        generateValue: true
+      # Admin key is asked for in the dashboard so it never lives in the repo; share it with reviewers.
+      - key: SEAT_ADMIN_KEY
+        sync: false
