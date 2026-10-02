@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: seats
+      POSTGRES_USER: seats
+      POSTGRES_PASSWORD: seats
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seats -d seats"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/seats
+      SPRING_DATASOURCE_USERNAME: seats
+      SPRING_DATASOURCE_PASSWORD: seats
+      SEAT_JWT_SECRET: compose-dev-secret-compose-dev-secret-compose
+    ports:
+      - "8080:8080"
