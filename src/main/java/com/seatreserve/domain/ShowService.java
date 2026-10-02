@@ -63,13 +63,8 @@ public class ShowService {
         Map<String, Object> show = jdbc.queryForList(
                 "select name, price_paise, per_user_limit from shows where id = ?", id)
                 .stream().findFirst().orElseThrow(() -> DomainException.notFound("show-not-found", "no such show"));
-        // an expired hold reads as available: it is instantly re-bookable (lazy reclaim)
         var seats = new TreeMap<String, String>();
-        jdbc.query("""
-                select label,
-                       case when status = 'held' and expires_at < clock_timestamp()
-                            then 'available' else status end as st
-                from seats where show_id = ? order by label""",
+        jdbc.query("select label, status from seats where show_id = ? order by label",
                 rs -> {
                     seats.put(rs.getString(1), rs.getString(2));
                 }, id);
