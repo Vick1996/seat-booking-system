@@ -3,6 +3,8 @@ server:
   shutdown: graceful
 
 spring:
+  jackson:
+    property-naming-strategy: SNAKE_CASE
   threads:
     virtual:
       enabled: true
@@ -15,6 +17,8 @@ spring:
       # Sized under the free Postgres connection cap; excess load is shed as 429, never 5xx.
       maximum-pool-size: ${DB_POOL_SIZE:15}
       connection-timeout: 2000
+      # Bounded waits: a lock/statement that can't finish in time is shed as 429, never a hang or 5xx.
+      connection-init-sql: SET lock_timeout='3s'; SET statement_timeout='10s'
   flyway:
     enabled: true
 
@@ -35,4 +39,5 @@ management:
 
 seat:
   jwt-secret: ${SEAT_JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
+  admin-key: ${SEAT_ADMIN_KEY:dev-admin-key}
   hold-ttl-seconds: 120
