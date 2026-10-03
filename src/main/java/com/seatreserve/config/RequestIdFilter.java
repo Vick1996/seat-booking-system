@@ -38,8 +38,7 @@ public class RequestIdFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(req, res);
         } finally {
-            Object who = req.getAttribute(AuthFilter.ATTR);
-            if (who instanceof Principal p) MDC.put("user_id", p.userId());
+            // user_id is already in the MDC if the request authenticated (see SecurityConfig.UserLogFilter)
             log.info("{} {} -> {} in {}ms", req.getMethod(), req.getRequestURI(), res.getStatus(),
                     (System.nanoTime() - start) / 1_000_000);
             MDC.clear();

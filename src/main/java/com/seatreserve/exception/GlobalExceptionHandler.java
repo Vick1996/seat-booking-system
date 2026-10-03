@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MissingRequestValueException;
@@ -44,6 +45,16 @@ public class GlobalExceptionHandler {
         log.warn("shedding load as 429: {}", e.toString());
         metrics.declined("overloaded");
         return body(HttpStatus.TOO_MANY_REQUESTS, "overloaded", "server is busy, retry with the same idempotency key");
+    }
+
+    /**
+     * Thrown by @PreAuthorize from inside a controller. Without this the catch-all below would turn a
+     * plain "not allowed" into a 500: the filter chain's own handler never sees exceptions that this
+     * advice has already caught.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<Map<String, Object>> accessDenied(AccessDeniedException e) {
+        return body(HttpStatus.FORBIDDEN, "forbidden", "you are not allowed to do this");
     }
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MissingRequestValueException.class,
