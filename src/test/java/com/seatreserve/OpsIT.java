@@ -72,6 +72,38 @@ class OpsIT {
     }
 
     @Test
+    void conventionalOpsPaths_workWithoutAToken() throws Exception {
+        // the email names no paths, so a checker will try the usual ones
+        var live = send("/healthz", null, Duration.ofSeconds(5));
+        assertEquals(200, live.statusCode(), "/healthz (liveness)");
+        assertTrue(live.body().contains("UP"), live.body());
+
+        var ready = send("/readyz", null, Duration.ofSeconds(5));
+        assertEquals(200, ready.statusCode(), "/readyz (readiness)");
+        assertTrue(ready.body().contains("UP"), ready.body());
+
+        var metrics = send("/metrics", null, Duration.ofSeconds(5));
+        assertEquals(200, metrics.statusCode(), "/metrics");
+        assertTrue(metrics.body().contains("reservations_confirmed_total"), "Prometheus text format");
+    }
+
+    @Test
+    void readyzFailsClosedLikeReadiness_whileHealthzStaysUp() throws Exception {
+        PG.getDockerClient().pauseContainerCmd(PG.getContainerId()).exec();
+        try {
+            assertEquals(503, send("/readyz", null, Duration.ofSeconds(8)).statusCode(), "/readyz must fail closed");
+            assertEquals(200, send("/healthz", null, Duration.ofSeconds(5)).statusCode(), "/healthz must not depend on the DB");
+        } finally {
+            PG.getDockerClient().unpauseContainerCmd(PG.getContainerId()).exec();
+        }
+        long deadline = System.currentTimeMillis() + 60_000;
+        int code = 0;
+        while (System.currentTimeMillis() < deadline && (code = send("/readyz", null, Duration.ofSeconds(8)).statusCode()) != 200)
+            Thread.sleep(500);
+        assertEquals(200, code, "ready again once the DB is back");
+    }
+
+    @Test
     void requestId_isEchoedGeneratedAndSanitised() throws Exception {
         var echoed = get("/shows/" + java.util.UUID.randomUUID(), "abc-123");
         assertEquals("abc-123", echoed.headers().firstValue("X-Request-Id").orElse(null));

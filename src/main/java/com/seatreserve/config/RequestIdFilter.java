@@ -23,7 +23,8 @@ public class RequestIdFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest req) {
-        return req.getRequestURI().startsWith("/actuator"); // probes and scrapes would drown the log
+        String p = req.getRequestURI(); // probes and scrapes would drown the log
+        return p.startsWith("/actuator") || p.equals("/healthz") || p.equals("/readyz") || p.equals("/metrics");
     }
 
     @Override

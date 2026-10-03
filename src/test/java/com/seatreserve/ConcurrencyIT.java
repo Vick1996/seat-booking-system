@@ -113,6 +113,36 @@ class ConcurrencyIT {
     }
 
     @Test
+    void missingIdempotencyKey_isAUniqueRequestNotAnError() throws Exception {
+        String show = createShow(List.of("N1", "N2", "N3"));
+        String alice = token("alice-nokey"), bob = token("bob-nokey");
+
+        var first = post("/shows/" + show + "/reserve", alice, "{\"seats\":[\"N1\"]}");
+        var second = post("/shows/" + show + "/reserve", alice, "{\"seats\":[\"N2\"]}");
+        assertEquals(201, first.statusCode(), first.body());
+        assertEquals(201, second.statusCode(), second.body());
+        assertTrue(!json.readTree(first.body()).get("reservation_id").asText()
+                .equals(json.readTree(second.body()).get("reservation_id").asText()), "each keyless request is its own reservation");
+
+        // without a key there is no retry protection, but a seat is still never sold twice
+        assertEquals(409, post("/shows/" + show + "/reserve", bob, "{\"seats\":[\"N1\"]}").statusCode());
+        assertInvariant(show, 3, 1, 0, 2);
+    }
+
+    @Test
+    void keylessStorm_stillHasExactlyOneWinner() throws Exception {
+        String show = createShow(List.of("H1"));
+        int buyers = 100;
+        List<String> tokens = IntStream.range(0, buyers).mapToObj(i -> token("keyless-" + i)).toList();
+
+        var codes = fireAll(buyers, i -> post("/shows/" + show + "/reserve", tokens.get(i), "{\"seats\":[\"H1\"]}").statusCode());
+
+        assertEquals(1, count(codes, 201), tally(codes));
+        assertEquals(buyers - 1, count(codes, 409), tally(codes));
+        assertInvariant(show, 1, 0, 0, 1);
+    }
+
+    @Test
     void overlappingMultiSeat_noDeadlock_noDoubleHold() throws Exception {
         List<String> seats = IntStream.rangeClosed(1, 6).mapToObj(i -> "M" + i).toList();
         String show = createShow(seats);

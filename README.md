@@ -16,6 +16,47 @@ docker compose up --build        # app + postgres on http://localhost:8080  (or:
 
 A clean checkout needs only Docker (to run) or a JDK 21 (to build). `mvnw` downloads Maven itself.
 
+## Try it in 60 seconds
+
+Works against a local run (`URL=http://localhost:8080`) or the live service.
+
+```sh
+URL=http://localhost:8080
+JSON='Content-Type: application/json'
+tok() { curl -s -X POST $URL/auth/token -H "$JSON" -d "$1" | sed 's/.*"token":"\([^"]*\)".*/\1/'; }
+
+ADMIN=$(tok '{"user_id":"admin","admin_key":"dev-admin-key"}')   # demo admin key, see below
+ALICE=$(tok '{"user_id":"alice"}')
+BOB=$(tok '{"user_id":"bob"}')
+
+# admin creates a show                                          -> 201, every seat "available"
+SHOW=$(curl -s -X POST $URL/shows -H "$JSON" -H "Authorization: Bearer $ADMIN" \
+  -d "{\"name\":\"demo-$(date +%s)\",\"price_paise\":25000,\"seats\":[\"A1\",\"A2\",\"A3\"]}" \
+  | sed 's/.*"id":"\([^"]*\)".*/\1/')
+
+# alice reserves A1                                              -> 201, status "confirmed", amount_paise 25000
+RESERVED=$(curl -s -X POST $URL/shows/$SHOW/reserve -H "$JSON" -H "Authorization: Bearer $ALICE" \
+  -d '{"seats":["A1"],"idempotency_key":"k1"}'); echo "$RESERVED"
+RES=$(echo "$RESERVED" | sed 's/.*"reservation_id":"\([^"]*\)".*/\1/')
+
+# the same request again (a retry)                               -> 200, the original reservation
+curl -s -o /dev/null -w "retry: %{http_code}\n" -X POST $URL/shows/$SHOW/reserve -H "$JSON" \
+  -H "Authorization: Bearer $ALICE" -d '{"seats":["A1"],"idempotency_key":"k1"}'
+
+# bob wants the same seat                                        -> 409 seat-taken
+curl -s -w "  (%{http_code})\n" -X POST $URL/shows/$SHOW/reserve -H "$JSON" -H "Authorization: Bearer $BOB" \
+  -d '{"seats":["A1"],"idempotency_key":"k2"}'
+
+# anyone can read the state; available + held + confirmed == total_seats
+curl -s $URL/shows/$SHOW | sed 's/"seats":.*//'; echo
+
+# only the owner can cancel                                      -> 403 for bob, 200 for alice
+curl -s -o /dev/null -w "bob cancels: %{http_code}\n" -X POST $URL/reservations/$RES/cancel -H "Authorization: Bearer $BOB"
+curl -s -o /dev/null -w "alice cancels: %{http_code}\n" -X POST $URL/reservations/$RES/cancel -H "Authorization: Bearer $ALICE"
+```
+
+**The admin key is a public demo credential.** The assignment does not say how a checker obtains an admin token, so `dev-admin-key` is documented here on purpose. It only allows creating shows; every other call needs just a user token. Tokens cannot be forged without the JWT secret, which is private. A real deployment must set `SEAT_ADMIN_KEY` (and `SEAT_JWT_SECRET`) privately.
+
 ## One-command burst
 
 ```sh
@@ -36,17 +77,25 @@ Tunables: `BURST_REQUESTS` (20000) `BURST_USERS` (2000) `BURST_SEATS` (5000) `BU
 
 ## API
 
-Identity comes from a bearer token, never from a request body. Get one (dev endpoint; a real deployment would sit behind an identity provider):
+Identity comes from a bearer token, never from a request body. Tokens are verified by Spring Security (OAuth2 resource server, HS256, stateless); a missing or invalid token is a `401` with a JSON body. There are three kinds of caller:
+
+| Caller | Can do |
+|---|---|
+| **Anonymous** | `POST /auth/token`, `GET /shows/{id}`, health and metrics endpoints |
+| **User** (any valid token) | reserve seats, cancel **their own** reservations |
+| **Admin** (token with `"admin": true`) | everything a user can, plus `POST /shows`. A non-admin gets `403` |
+
+Get a token (dev endpoint; a real deployment would sit behind an identity provider):
 
 ```sh
 curl -s -X POST $URL/auth/token -H 'Content-Type: application/json' -d '{"user_id":"alice"}'
-curl -s -X POST $URL/auth/token -H 'Content-Type: application/json' -d '{"user_id":"admin","admin_key":"<ADMIN_KEY>"}'   # admin
+curl -s -X POST $URL/auth/token -H 'Content-Type: application/json' -d '{"user_id":"admin","admin_key":"dev-admin-key"}'   # admin (public demo key)
 ```
 
 | Endpoint | Auth | Notes |
 |---|---|---|
 | `POST /shows` `{name, seats[], price_paise, per_user_limit?}` | admin | all seats start `available`; limit defaults to 4 |
-| `POST /shows/{id}/reserve` `{seats[], idempotency_key}` | user | key may also be an `Idempotency-Key` header. **201** new, **200** replay, **409** declined |
+| `POST /shows/{id}/reserve` `{seats[], idempotency_key}` | user | key may also be an `Idempotency-Key` header; if **omitted**, the request is treated as unique (no retry protection, but a seat is still never sold twice); a blank key is a `400`. **201** new, **200** replay, **409** declined |
 | `POST /reservations/{id}/cancel` | owner only | releases the seats; safe to repeat; never frees a seat now owned by someone else |
 | `GET /shows/{id}` | none | `total_seats`, `available`, `held`, `confirmed`, per-seat status |
 
@@ -60,15 +109,15 @@ Behaviour that is documented and tested:
 
 ## Observability
 
-- `GET /actuator/health/liveness` (process up) and `/readiness` (DB reachable, **fails closed with 503** within 2 s, even if the DB hangs).
-- `GET /actuator/prometheus`: `reservations_confirmed_total`, `reservations_declined_total{reason="seat-taken|per-user-limit|idempotent-replay|idempotency-conflict|overloaded"}`, `seats_available{show_id}`. Counters are bumped after commit and reconcile with the API; the burst checks it.
+- `GET /healthz` (liveness: process up) and `GET /readyz` (readiness: DB reachable, **fails closed with 503** within 2 s, even if the DB hangs). Same checks as `/actuator/health/liveness` and `/actuator/health/readiness`. No token needed.
+- `GET /metrics` (also `/actuator/prometheus`): `reservations_confirmed_total`, `reservations_declined_total{reason="seat-taken|per-user-limit|idempotent-replay|idempotency-conflict|overloaded"}`, `seats_available{show_id}`. Counters are bumped after commit and reconcile with the API; the burst checks it.
 - Logs are structured JSON on stdout with a `request_id` on every line (also returned as `X-Request-Id`; send your own to correlate), and one access line per request. On Render: dashboard > Logs.
 
 ## Deploy (Render, free tier)
 
 1. Push this repo to GitHub (public).
 2. Render > **New > Blueprint** > select the repo. `render.yaml` creates the web service (Docker) and a free Postgres, and wires the DB settings.
-3. When prompted, set `SEAT_ADMIN_KEY` (share it with reviewers). `SEAT_JWT_SECRET` is generated.
+3. Nothing to enter: `SEAT_JWT_SECRET` is generated (private), and `SEAT_ADMIN_KEY` is fixed to the documented demo key in `render.yaml`, so reviewers can create shows with no out-of-band step.
 4. Wait for the first deploy; the health check is `/actuator/health/readiness`.
 
 Free tier notes: the web service sleeps after ~15 min idle (cold start ~1 min; the burst runner waits for readiness), and the free Postgres has a low connection cap, so the pool is capped at 15 (`DB_POOL_SIZE`).

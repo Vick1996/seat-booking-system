@@ -20,6 +20,14 @@ _Avoid_: Booking, order, purchase
 Giving a reservation's seats back so they can be bought again. Only the owner can release.
 _Avoid_: Refund, undo
 
+**Caller**:
+Whoever makes a request, identified only by their verified token. A caller is anonymous, a user, or an admin.
+_Avoid_: Client, account
+
+**Admin**:
+A caller allowed to create shows. Everything else an admin does, they do as an ordinary user.
+_Avoid_: Superuser, operator
+
 **Idempotency key**:
 A client-chosen token that makes a request count once per user, however many times it is retried.
 _Avoid_: Request id, nonce

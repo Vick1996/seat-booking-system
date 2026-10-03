@@ -33,6 +33,10 @@ public class ReservationController {
                                                    @RequestHeader(value = "Idempotency-Key", required = false) String headerKey,
                                                    @RequestBody ReserveRequest req) {
         String key = headerKey != null ? headerKey : req.idempotencyKey();
+        // No key at all: treat the request as unique. It gets no retry protection (nothing to match a
+        // retry against), but seat uniqueness and the per-user limit still hold. A blank or oversized
+        // key is a client bug and stays a 400 in the service.
+        if (key == null) key = "auto-" + UUID.randomUUID();
         var result = reservations.reserve(caller.getSubject(), id, req.seats(), key);
         // counted here, after the transaction has committed
         if (result.replay()) metrics.declined("idempotent-replay");

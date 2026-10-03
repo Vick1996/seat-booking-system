@@ -66,7 +66,7 @@ class ValidationIT {
 
         // {description, path, body, expected status}
         Object[][] cases = {
-                {"missing idempotency key", url, "{\"seats\":[\"A1\"]}", 400},
+                // an ABSENT key is a valid unique request (see ConcurrencyIT); a blank one is a client bug
                 {"blank idempotency key", url, "{\"seats\":[\"A1\"],\"idempotency_key\":\" \"}", 400},
                 {"no seats field", url, "{\"idempotency_key\":\"k\"}", 400},
                 {"empty seats", url, "{\"seats\":[],\"idempotency_key\":\"k\"}", 400},
