@@ -55,6 +55,20 @@ public class ReservationService {
         String sig = String.join(",", requested.stream().sorted().toList());
         int n = requested.size();
 
+        // Fast path, no lock and no write. Most of a stampede is losers asking for a seat that is already taken;
+        // they used to take two advisory locks and queue on the seat's row lock (83% of all SQL time in the
+        // measured baseline). A committed reservation under this key is a replay, so answer it here.
+        var early = reservations.findByUserAndKey(userId, key);
+        if (early.isPresent()) return replayOrConflict(early.get(), showId, sig);
+        if (seats.anyTaken(showId, sig)) {
+            // look again: a duplicate of a request that JUST won must get its replay, not a conflict for its own seat
+            var again = reservations.findByUserAndKey(userId, key);
+            if (again.isPresent()) return replayOrConflict(again.get(), showId, sig);
+            throw DomainException.conflict("seat-taken", "one or more of the requested seats is already taken");
+        }
+
+        // Looked up only now: a loser has already been answered above and never needs the show. An unknown show has
+        // no seats, so it falls through the fast path and is a 404 here, exactly as before.
         var show = shows.find(showId)
                 .orElseThrow(() -> DomainException.notFound("show-not-found", "no such show"));
 
@@ -62,13 +76,7 @@ public class ReservationService {
         reservations.advisoryLock("idem:" + userId + ":" + key);
 
         var existing = reservations.findByUserAndKey(userId, key);
-        if (existing.isPresent()) {
-            var r = existing.get();
-            if (!showId.equals(r.showId()) || !sig.equals(r.seatSignature()))
-                throw DomainException.conflict("idempotency-conflict",
-                        "idempotency key was already used with a different request");
-            return new ReserveResult(view(r, r.status()), true);
-        }
+        if (existing.isPresent()) return replayOrConflict(existing.get(), showId, sig);
 
         // (2) serialize the booking-limit check per (show, user) so parallel keys cannot overshoot.
         reservations.advisoryLock("lim:" + showId + ":" + userId);
@@ -149,6 +157,14 @@ public class ReservationService {
     public int sweepExpired() {
         seats.releaseExpired();
         return reservations.markExpired();
+    }
+
+    /** The same key with the same request is a replay (200); with a different request it is a conflict (409). */
+    private ReserveResult replayOrConflict(ReservationRecord r, UUID showId, String sig) {
+        if (!showId.equals(r.showId()) || !sig.equals(r.seatSignature()))
+            throw DomainException.conflict("idempotency-conflict",
+                    "idempotency key was already used with a different request");
+        return new ReserveResult(view(r, r.status()), true);
     }
 
     private ReservationRecord lockOwned(String userId, UUID reservationId) {

@@ -103,6 +103,7 @@ public class Burst {
         // --- run ---
         Map<String, Double> before = metrics(base);
         var outcomes = new ConcurrentLinkedQueue<Outcome>();
+        var latencyMs = new ConcurrentLinkedQueue<Long>();
         var invariantBreaks = new AtomicInteger();
         var invariantSamples = new AtomicInteger();
         var running = new AtomicBoolean(true);
@@ -133,7 +134,9 @@ public class Burst {
                     try {
                         String body = "{\"seats\":[" + String.join(",", s.seats.stream().map(x -> "\"" + x + "\"").toList())
                                 + "],\"idempotency_key\":\"" + s.key + "\"}";
+                        long t1 = System.nanoTime();
                         var r = call(base, "POST", "/shows/" + show + "/reserve", tokens[s.user], body);
+                        if (r.error == null) latencyMs.add((System.nanoTime() - t1) / 1_000_000); // answered requests only
                         outcomes.add(r.error != null ? new Outcome(-1, null, List.of(), r.error)
                                 : new Outcome(r.status, find(r.body, "\"reason\":\"([^\"]+)\""), seatsOf(r.body), null));
                     } finally {
@@ -182,6 +185,11 @@ public class Burst {
         System.out.printf("  201 confirmed (new)        %6d%n  200 idempotent replay        %6d%n", created201, replay200);
         declined.forEach((k, v) -> System.out.printf("  %-26s %6d%n", k, v));
         System.out.printf("  5xx                        %6d%n  transport errors/timeouts  %6d%n", c5xx, transport);
+        var sorted = latencyMs.stream().sorted().toList();
+        if (!sorted.isEmpty())
+            System.out.printf("  latency of answered requests (ms): p50 %d | p95 %d | p99 %d | max %d%n",
+                    sorted.get(sorted.size() / 2), sorted.get((int) (sorted.size() * 0.95)),
+                    sorted.get((int) (sorted.size() * 0.99)), sorted.get(sorted.size() - 1));
         var errKinds = new TreeMap<String, Integer>();
         for (Outcome o : outcomes) if (o.status == -1) errKinds.merge(o.error, 1, Integer::sum);
         errKinds.forEach((k, v) -> System.out.printf("      %5d x %s%n", v, k.length() > 110 ? k.substring(0, 110) : k));

@@ -28,6 +28,11 @@ public class ShowRepository {
     public void insertSeats(UUID showId, List<String> labels) {
         jdbc.update("insert into seats(show_id, label) select ?, unnest(string_to_array(?, ','))",
                 showId, String.join(",", labels));
+        // Without statistics Postgres picks the (show_id, status) index and fetches EVERY seat of the show to find
+        // one, so each lookup costs more the bigger the show (measured 10x slower at 5,000 seats). A checker bursts
+        // a show the moment it is created, long before the background analyzer (about a minute) has run. ANALYZE
+        // is allowed inside a transaction, so the statistics are committed together with the seats.
+        jdbc.execute("analyze seats");
     }
 
     public Optional<ShowRecord> find(UUID id) {

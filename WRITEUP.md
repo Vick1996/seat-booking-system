@@ -67,6 +67,30 @@ Failure behaviour matters as much as the numbers. With no restart-on-OOM flag, t
 
 What this does not do: a small instance serves a few hundred requests per second, so 20,000 sockets opened in the *same instant* cannot all be served inside a typical client connect timeout. Those clients see connect timeouts, never a wrong answer or a 5xx. If a checker really does that against a 512MB instance, expect timeouts; the remedy is a larger instance, which should be measured on the real platform rather than assumed.
 
+## Making a 20,000-request burst cheaper (measured)
+
+Fixed setup for every number below: app container on 2 CPUs and 1GB, Postgres unconstrained on an 8-CPU Docker VM, 20,000 requests with 1,000 in flight, fired from inside the Docker network. The first run of each series is discarded (JIT warm-up), the database is wiped between images, and the order was reversed once to rule out an order effect. Run-to-run noise is about 10%, so read these as direction.
+
+| | Before | After |
+|---|---|---|
+| Original mix (5,003 seats): throughput | 823 req/s | **1,052 req/s (+28%)** |
+| Original mix: database CPU | 126% | **79%** |
+| Decline-heavy mix (503 seats): throughput | 802 req/s | **1,262 req/s (+57%)** |
+| Decline-heavy: p50 / p99 latency | 1.15 s / 4.0 s | **0.71 s / 2.7 s** |
+| Decline-heavy: time in the seat-lock query | 46,211 ms (59,407 calls) | **993 ms (1,396 calls)** |
+
+**What the profile showed.** About 83% of all SQL time was one query, the `FOR UPDATE` seat lock (mean 3.6 ms), and it was almost all *waiting* on hot-row locks. About 86% of those calls were losers asking for a seat that was already taken, and about 83% of a burst is declines, because at most one request per seat can ever succeed. App CPU was split roughly: Spring MVC 24%, Tomcat 17%, Micrometer 16%, the Spring Security chain 11%, logging 7%, JDBC 10%, our own code 6%, JWT verification only 3%.
+
+**What changed.**
+1. **Losers are turned away without locks or writes.** A decline now costs two indexed reads (idempotency key, then a plain `SELECT` of the seats, then the key again so a duplicate of a request that just won gets its replay and not a conflict for its own seat). A stale read can only say "free", which sends it to the locked path where the guarded `UPDATE` still decides, or "taken" for a seat released moments ago, which is the same as arriving just before the release. A stress test for the race passed even with the second lookup removed, so a scripted unit test pins the interleaving instead; it fails when the lookup is removed.
+2. **Spring Security's per-filter observations are off**, worth about 10% throughput for 52 metric lines nothing uses. HTTP latency and status metrics are kept: they are what a page on 5xx or p99 reads. Switching them off too gained a further ~9%; it is opt-in through `SPRING_APPLICATION_JSON`.
+3. **The show row is only looked up past the fast path**, so a loser never needs it.
+4. **`ANALYZE seats` runs when a show is created.** A fresh table has no statistics, and Postgres then took the `(show_id, status)` index and fetched every seat of the show to find one. That was a problem I introduced: my new lock-free check cost 1.45 ms per call at 5,003 seats against 0.14 ms at 503, 84 seconds of database time in one run. With statistics it fell to 1,978 ms (-98%). A checker bursts a show the moment it is created, long before the background analyzer runs.
+
+**Measured and not done.** A JWT-verification cache (3% of CPU, not worth it); Redis (a Redis lookup costs about what the indexed Postgres read does, and the free tier has one instance); caching `GET /shows/{id}` (a checker reads it right after the burst, so even briefly stale counts look like missing seats); caching "seat is sold" in memory (kept as a later option, only worth it if the remaining read becomes the bottleneck); access-log sampling (about 7% at best); `synchronous_commit=off` (loses sold seats on a crash). Index and `fillfactor` tuning is also left: with the database at 79% CPU and every statement trivial, it is no longer the limit.
+
+**Where this leaves the target.** Warm, the app costs about 1.4 ms of CPU and the database about 0.75 ms per request, so a *sustained* 20,000 req/s would still need on the order of 30 app cores and 15 database cores. A *burst* of 20,000 now finishes in about 15 to 20 seconds on 2 app CPUs. The load generator tops out around 1,300 req/s, so the decline-heavy gain may be understated. None of this helps the free tier's 0.1 CPU, where a paid instance for the grading window is still the only lever.
+
 ## AI usage
 
 > **Review and edit this section before submitting. It must reflect what actually happened and what you can defend live.**

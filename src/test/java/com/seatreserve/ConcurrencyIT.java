@@ -113,6 +113,23 @@ class ConcurrencyIT {
     }
 
     @Test
+    void racingDuplicates_neverSeeAConflictForTheirOwnSeat() throws Exception {
+        // A duplicate that loses the race to the original must get the original's 200 replay, never a seat-taken
+        // 409 for the seat the original just took. Many short rounds, because the window is narrow.
+        int rounds = 30, dupes = 8;
+        List<String> seats = IntStream.range(0, rounds).mapToObj(i -> "R" + i).toList();
+        String show = createShow(seats);
+        var wrong = new ArrayList<String>();
+        for (int round = 0; round < rounds; round++) {
+            final String tok = token("racer-" + round), seat = seats.get(round), key = "dup-" + round;
+            var codes = fireAll(dupes, i -> post("/shows/" + show + "/reserve", tok,
+                    "{\"seats\":[\"" + seat + "\"],\"idempotency_key\":\"" + key + "\"}").statusCode());
+            if (count(codes, 201) != 1 || count(codes, 200) != dupes - 1) wrong.add("round " + round + ": " + tally(codes));
+        }
+        assertEquals(List.of(), wrong, "exactly one 201 and the rest replays, every round");
+    }
+
+    @Test
     void missingIdempotencyKey_isAUniqueRequestNotAnError() throws Exception {
         String show = createShow(List.of("N1", "N2", "N3"));
         String alice = token("alice-nokey"), bob = token("bob-nokey");

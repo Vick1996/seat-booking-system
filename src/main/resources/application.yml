@@ -47,6 +47,13 @@ management:
     web:
       exposure:
         include: health,prometheus
+  observations:
+    enable:
+      # Spring Security times every filter in the chain on every request. Measured at the same load it cost ~10%
+      # throughput (app CPU 151% -> 131%) for 52 metric lines nothing here uses. HTTP request latency and status
+      # metrics (http_server_requests) are deliberately KEPT: they are what a 2am page on 5xx or p99 reads. Turning
+      # those off too bought a further ~9%; opt in with SPRING_APPLICATION_JSON if CPU matters more than that.
+      "[spring.security]": false
   endpoint:
     health:
       probes:

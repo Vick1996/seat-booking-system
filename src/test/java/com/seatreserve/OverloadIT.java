@@ -81,6 +81,28 @@ class OverloadIT {
         assertEquals(201, post("/shows/" + show + "/reserve", user, "{\"seats\":[\"A1\"],\"idempotency_key\":\"k1\"}").statusCode());
     }
 
+    @Test
+    void aDeclineOnASoldSeat_takesNoLocks_soItIsNeverStuckBehindARowLock() throws Exception {
+        String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
+        String alice = token("{\"user_id\":\"alice\"}"), bob = token("{\"user_id\":\"bob\"}");
+        String show = id(post("/shows", admin, "{\"name\":\"d-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"]}").body());
+        assertEquals(201, post("/shows/" + show + "/reserve", alice, "{\"seats\":[\"A1\"],\"idempotency_key\":\"a1\"}").statusCode());
+
+        // ~83% of a stampede is losers asking for a seat that is already sold; they must not queue for its row lock
+        try (Connection holder = dataSource.getConnection()) {
+            holder.setAutoCommit(false);
+            holder.createStatement().execute("select 1 from seats where show_id = '" + show + "' and label = 'A1' for update");
+
+            long t0 = System.nanoTime();
+            var res = post("/shows/" + show + "/reserve", bob, "{\"seats\":[\"A1\"],\"idempotency_key\":\"b1\"}");
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(409, res.statusCode(), "a sold seat is a clean decline, not a lock timeout: " + res.body());
+            assertTrue(res.body().contains("seat-taken"), res.body());
+            assertTrue(ms < 400, "and it answers without waiting on the lock (lock_timeout here is 500ms): " + ms + "ms");
+            holder.rollback();
+        }
+    }
+
     // ---- helpers ----
 
     double overloadedCount() throws Exception {

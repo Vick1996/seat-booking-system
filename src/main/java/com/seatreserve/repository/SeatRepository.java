@@ -42,6 +42,20 @@ public class SeatRepository {
         return seats;
     }
 
+    /**
+     * Lock-free pre-check: is any requested seat sold or under a live hold right now? A plain SELECT never waits on a
+     * row lock, so a loser can be turned away without queueing behind the winner. It may be a few milliseconds stale,
+     * which is safe: a stale "free" just falls into the locked path (the authority), and a stale "taken" for a seat
+     * released a moment ago is the same as the request having arrived just before the release.
+     */
+    public boolean anyTaken(UUID showId, String seats) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists (select 1 from seats
+                               where show_id = ? and label = any(string_to_array(?, ','))
+                                 and not (status = 'available' or (status = 'held' and expires_at < clock_timestamp())))""",
+                Boolean.class, showId, seats));
+    }
+
     /** Seats this user holds against the per-user limit: sold ones plus holds that have not yet lapsed. */
     public int countActive(UUID showId, String userId) {
         Integer n = jdbc.queryForObject("""
