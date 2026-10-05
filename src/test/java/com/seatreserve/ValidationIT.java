@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Bad input must always be a clean 4xx, never a 5xx. Needs Docker; run with `./mvnw verify`. */
 @Tag("it")
@@ -72,6 +73,7 @@ class ValidationIT {
                 {"empty seats", url, "{\"seats\":[],\"idempotency_key\":\"k\"}", 400},
                 {"duplicate seat in request", url, "{\"seats\":[\"A1\",\"A1\"],\"idempotency_key\":\"k\"}", 400},
                 {"invalid label", url, "{\"seats\":[\"A 1\"],\"idempotency_key\":\"k\"}", 400},
+                {"idempotency key containing a NUL", url, "{\"seats\":[\"A1\"],\"idempotency_key\":\"k\\u0000x\"}", 400},
                 {"null seat entry", url, "{\"seats\":[null],\"idempotency_key\":\"k\"}", 400},
                 {"too many seats (51)", url, "{\"seats\":[" + fiftyOne + "],\"idempotency_key\":\"k\"}", 400},
                 {"seats is not a list", url, "{\"seats\":\"A1\",\"idempotency_key\":\"k\"}", 400},
@@ -91,15 +93,85 @@ class ValidationIT {
     }
 
     @Test
+    void twoShowsMayShareAName() throws Exception {
+        // the email's own example is "friday-night"; a checker re-running against the same URL creates it again
+        String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
+        String body = "{\"name\":\"friday-night\",\"price_paise\":25000,\"seats\":[\"A1\",\"A2\"]}";
+        var first = post("/shows", admin, body);
+        var second = post("/shows", admin, body);
+        assertEquals(201, first.statusCode(), first.body());
+        assertEquals(201, second.statusCode(), "a show name is a label, not a key: " + second.body());
+        assertTrue(!id(first.body()).equals(id(second.body())), "each gets its own id");
+    }
+
+    @Test
+    void thePriceCap_leavesRoomToReserveTheMostSeatsOneRequestAllows() throws Exception {
+        // at the cap, the largest request (50 seats) must not overflow a 64-bit amount
+        String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
+        String user = token("{\"user_id\":\"whale\"}");
+        String seats = String.join(",", java.util.stream.IntStream.rangeClosed(1, 50).mapToObj(i -> "\"S" + i + "\"").toList());
+        var show = post("/shows", admin, "{\"name\":\"cap-" + UUID.randomUUID() + "\",\"price_paise\":1000000000000,"
+                + "\"per_user_limit\":50,\"seats\":[" + seats + "]}");
+        assertEquals(201, show.statusCode(), "a price exactly at the cap is allowed: " + show.body());
+        var res = post("/shows/" + id(show.body()) + "/reserve", user, "{\"seats\":[" + seats + "],\"idempotency_key\":\"big-1\"}");
+        assertEquals(201, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"amount_paise\":50000000000000"), "50 x 10^12 paise: " + res.body());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Test
+    void aShowThatPredatesThePriceCap_isNeverA500() throws Exception {
+        // a row written before the cap existed, or straight into the database, can hold a price whose total overflows
+        UUID show = UUID.randomUUID();
+        jdbc.update("insert into shows(id, name, price_paise, per_user_limit) values (?,?,?,4)", show, "legacy", Long.MAX_VALUE);
+        jdbc.update("insert into seats(show_id, label) values (?, 'A1'), (?, 'A2')", show, show);
+
+        var res = post("/shows/" + show + "/reserve", token("{\"user_id\":\"vera\"}"),
+                "{\"seats\":[\"A1\",\"A2\"],\"idempotency_key\":\"legacy-1\"}");
+        assertEquals(409, res.statusCode(), "price x seats overflows: a decline, not a server error: " + res.body());
+        assertTrue(res.body().contains("amount-too-large"), res.body());
+        // nothing was half-done: the seats are still free
+        assertTrue(send2Get("/shows/" + show).contains("\"available\":2"));
+    }
+
+    String send2Get(String path) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+    }
+
+    @Test
+    void tokenMint_rejectsControlCharactersInTheUserId() throws Exception {
+        // a NUL here is accepted into a token and then makes every later database call fail
+        assertEquals(400, send("POST", "/auth/token", null, "{\"user_id\":\"bad\\u0000user\"}", "application/json"));
+        assertEquals(400, send("POST", "/auth/token", null, "{\"user_id\":\"two\\nlines\"}", "application/json"));
+        assertEquals(200, send("POST", "/auth/token", null, "{\"user_id\":\"fine-user_1\"}", "application/json"));
+    }
+
+    HttpResponse<String> post(String path, String token, String body) throws Exception {
+        var b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) b.header("Authorization", "Bearer " + token);
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    static String id(String body) {
+        var m = java.util.regex.Pattern.compile("\"id\":\"([^\"]+)\"").matcher(body);
+        m.find();
+        return m.group(1);
+    }
+
+    @Test
     void createShowRejectsBadInput_withClientErrors() throws Exception {
         String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
-        String name = "dup-" + UUID.randomUUID();
-        assertEquals(201, send("POST", "/shows", admin,
-                "{\"name\":\"" + name + "\",\"price_paise\":100,\"seats\":[\"A1\"]}", "application/json"));
         String tooMany = String.join(",", java.util.stream.IntStream.rangeClosed(1, 100_001).mapToObj(i -> "\"S" + i + "\"").toList());
 
         Object[][] cases = {
-                {"duplicate show name", "{\"name\":\"" + name + "\",\"price_paise\":100,\"seats\":[\"A1\"]}", 409},
+                {"name containing a NUL (Postgres cannot store it)", "{\"name\":\"a\\u0000b\",\"price_paise\":100,\"seats\":[\"A1\"]}", 400},
+                {"name containing a newline", "{\"name\":\"a\\nb\",\"price_paise\":100,\"seats\":[\"A1\"]}", 400},
+                {"price above the cap", "{\"name\":\"n30-" + UUID.randomUUID() + "\",\"price_paise\":1000000000001,\"seats\":[\"A1\"]}", 400},
+                {"price that would overflow an amount", "{\"name\":\"n31-" + UUID.randomUUID() + "\",\"price_paise\":9223372036854775807,\"seats\":[\"A1\"]}", 400},
                 {"missing name", "{\"price_paise\":100,\"seats\":[\"A1\"]}", 400},
                 {"blank name", "{\"name\":\" \",\"price_paise\":100,\"seats\":[\"A1\"]}", 400},
                 {"missing price", "{\"name\":\"n1-" + UUID.randomUUID() + "\",\"seats\":[\"A1\"]}", 400},
@@ -113,6 +185,10 @@ class ValidationIT {
                 {"null seat label", "{\"name\":\"n9-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[null]}", 400},
                 {"per_user_limit zero", "{\"name\":\"n10-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"per_user_limit\":0}", 400},
                 {"fractional per_user_limit", "{\"name\":\"n11-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"per_user_limit\":1.5}", 400},
+                {"hold_seconds zero", "{\"name\":\"n20-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":0}", 400},
+                {"hold_seconds negative", "{\"name\":\"n21-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":-5}", 400},
+                {"hold_seconds over a day", "{\"name\":\"n22-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":86401}", 400},
+                {"fractional hold_seconds", "{\"name\":\"n23-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":1.5}", 400},
                 {"more than 100000 seats", "{\"name\":\"n12-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[" + tooMany + "]}", 400},
                 {"malformed json", "{\"name\":", 400},
                 {"empty body", "", 400},

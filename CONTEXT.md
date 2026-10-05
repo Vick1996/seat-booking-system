@@ -5,7 +5,7 @@ A service that is the system of record for who owns each seat of an event, decid
 ## Language
 
 **Show**:
-An event with a fixed set of numbered seats and one price per seat.
+An event with a fixed set of numbered seats and one price per seat. Its name is only a label: two shows may share one.
 _Avoid_: Event, concert, screening
 
 **Seat**:
@@ -16,8 +16,16 @@ _Avoid_: Ticket, slot
 The record of one successful request to buy one or more seats for a user. It owns those seats until it is cancelled.
 _Avoid_: Booking, order, purchase
 
+**Hold**:
+A time-boxed claim on seats that the owner must confirm before it lapses. Only shows created with a hold window use holds; on every other show a reservation is a sale at once.
+_Avoid_: Lock, temporary booking
+
+**Confirmation**:
+Turning a live hold into a sale. A hold that has lapsed cannot be confirmed.
+_Avoid_: Payment, checkout
+
 **Release**:
-Giving a reservation's seats back so they can be bought again. Only the owner can release.
+Giving a reservation's seats back so they can be bought again, either because the owner cancels or because a hold lapses.
 _Avoid_: Refund, undo
 
 **Caller**:

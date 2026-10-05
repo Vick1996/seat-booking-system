@@ -9,7 +9,8 @@ import java.util.UUID;
 
 @Repository
 public class ShowRepository {
-    public record ShowRecord(String name, long pricePaise, int perUserLimit) {
+    /** {@code holdSeconds} is null for an ordinary show (reserve sells immediately). */
+    public record ShowRecord(String name, long pricePaise, int perUserLimit, Integer holdSeconds) {
     }
 
     private final JdbcTemplate jdbc;
@@ -18,9 +19,9 @@ public class ShowRepository {
         this.jdbc = jdbc;
     }
 
-    public void insert(UUID id, String name, long pricePaise, int perUserLimit) {
-        jdbc.update("insert into shows(id, name, price_paise, per_user_limit) values (?,?,?,?)",
-                id, name, pricePaise, perUserLimit);
+    public void insert(UUID id, String name, long pricePaise, int perUserLimit, Integer holdSeconds) {
+        jdbc.update("insert into shows(id, name, price_paise, per_user_limit, hold_seconds) values (?,?,?,?,?)",
+                id, name, pricePaise, perUserLimit, holdSeconds);
     }
 
     /** One statement for the whole hall; labels cannot contain commas (see ShowService.LABEL). */
@@ -30,7 +31,8 @@ public class ShowRepository {
     }
 
     public Optional<ShowRecord> find(UUID id) {
-        return jdbc.query("select name, price_paise, per_user_limit from shows where id = ?",
-                (rs, i) -> new ShowRecord(rs.getString(1), rs.getLong(2), rs.getInt(3)), id).stream().findFirst();
+        return jdbc.query("select name, price_paise, per_user_limit, hold_seconds from shows where id = ?",
+                (rs, i) -> new ShowRecord(rs.getString(1), rs.getLong(2), rs.getInt(3), rs.getObject(4, Integer.class)),
+                id).stream().findFirst();
     }
 }

@@ -40,10 +40,19 @@ public class ReservationController {
         var result = reservations.reserve(caller.getSubject(), id, req.seats(), key);
         // counted here, after the transaction has committed
         if (result.replay()) metrics.declined("idempotent-replay");
+        else if ("held".equals(result.reservation().status())) metrics.held();
         else metrics.confirmed();
         // 201 for a new reservation; a replay is 200 so "exactly one 201 per seat" stays true under retries
         return ResponseEntity.status(result.replay() ? HttpStatus.OK : HttpStatus.CREATED)
                 .body(result.reservation());
+    }
+
+    /** Turns a hold into a sale (only for shows created with hold_seconds). Counted once, not on a repeat. */
+    @PostMapping("/reservations/{id}/confirm")
+    public ReservationView confirm(@AuthenticationPrincipal Jwt caller, @PathVariable UUID id) {
+        var result = reservations.confirm(caller.getSubject(), id);
+        if (!result.replay()) metrics.confirmed();
+        return result.reservation();
     }
 
     @PostMapping("/reservations/{id}/cancel")

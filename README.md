@@ -94,17 +94,21 @@ curl -s -X POST $URL/auth/token -H 'Content-Type: application/json' -d '{"user_i
 
 | Endpoint | Auth | Notes |
 |---|---|---|
-| `POST /shows` `{name, seats[], price_paise, per_user_limit?}` | admin | all seats start `available`; limit defaults to 4 |
+| `POST /shows` `{name, seats[], price_paise, per_user_limit?, hold_seconds?}` | admin | all seats start `available`; limit defaults to 4. `hold_seconds` (1..86400) is optional and opts the show into **time-boxed holds** (see below) |
 | `POST /shows/{id}/reserve` `{seats[], idempotency_key}` | user | key may also be an `Idempotency-Key` header; if **omitted**, the request is treated as unique (no retry protection, but a seat is still never sold twice); a blank key is a `400`. **201** new, **200** replay, **409** declined |
-| `POST /reservations/{id}/cancel` | owner only | releases the seats; safe to repeat; never frees a seat now owned by someone else |
+| `POST /reservations/{id}/confirm` | owner only | **hold shows only.** Turns a live hold into a sale (200, `status: "confirmed"`); safe to repeat. A hold that has lapsed is refused with `409 hold-expired` and never resurrected |
+| `POST /reservations/{id}/cancel` | owner only | releases a hold or a sale; safe to repeat; never frees a seat now owned by someone else |
 | `GET /shows/{id}` | none | `total_seats`, `available`, `held`, `confirmed`, per-seat status |
 
 Behaviour that is documented and tested:
 
-- **Money** is integer paise. `amount_paise = price_paise * seat_count`.
+- **Money** is integer paise. `amount_paise = price_paise * seat_count`. `price_paise` may be at most 1,000,000,000,000 (10^12), so the largest request (50 seats) can never overflow a 64-bit amount.
+- **Show names are labels, not keys.** Two shows may share a name (the email's own example is `"friday-night"`); every show gets its own `id`.
+- **Input limits** (all breaches are a `400`): seat labels match `[A-Za-z0-9._-]{1,32}`, at most 100,000 seats per show and 50 per reserve request; names, user ids and idempotency keys must not contain control characters (NUL, newlines, tabs). Anything else Postgres refuses to store is also a `400`, never a `500`.
 - **Multi-seat is all-or-nothing.** If any requested seat is taken, the whole request is a 409 and nothing is held.
 - **Declines are 409** with a machine-readable `reason`: `seat-taken`, `per-user-limit`, `idempotency-conflict`. Same key + same seats is a replay (200); same key + different seats is a 409.
-- **Release model:** explicit owner-only cancel. A reserve is confirmed immediately (no timed hold).
+- **Release, two ways.** Owner-only cancel always works. In addition, a show created with `hold_seconds` makes reserve place a **hold** (`201`, `status: "held"`, plus `expires_at`) that the owner must confirm before it lapses. A lapsed hold is free again **at once**: another user can reserve it, `GET /shows/{id}` reports it as `available`, and it stops counting toward the per-user limit. Correctness does not depend on a background job; a sweeper (every 10s) only tidies the reservation's status to `expired`.
+- **Default is unchanged.** A show created **without** `hold_seconds` behaves exactly as the assignment's example describes: reserve returns `201` with `status: "confirmed"` immediately, and there is no `expires_at`.
 - Under extreme saturation (no DB connection or lock within the bounded waits) the service sheds load as **429**, never 5xx.
 
 ## Observability

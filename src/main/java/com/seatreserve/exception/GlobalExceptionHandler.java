@@ -4,7 +4,9 @@ import com.seatreserve.config.SeatMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +48,18 @@ public class GlobalExceptionHandler {
         log.warn("shedding load as 429: {}", e.toString());
         metrics.declined("overloaded");
         return body(HttpStatus.TOO_MANY_REQUESTS, "overloaded", "server is busy, retry with the same idempotency key");
+    }
+
+    /**
+     * Safety net: data the database refuses to store (a NUL in text, say) is the caller's input, never a server
+     * fault. The validators in the services reject the cases we know about; this catches the ones we do not, so a
+     * novel bad input is a 400 instead of a 500. A duplicate key that escapes is a conflict.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<Map<String, Object>> dataIntegrity(DataIntegrityViolationException e) {
+        if (e instanceof DuplicateKeyException)
+            return body(HttpStatus.CONFLICT, "conflict", "the request conflicts with an existing record");
+        return body(HttpStatus.BAD_REQUEST, "invalid-input", "the request contains data that cannot be stored");
     }
 
     /**

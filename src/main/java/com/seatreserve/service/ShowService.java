@@ -5,7 +5,6 @@ import com.seatreserve.dto.ShowView;
 import com.seatreserve.exception.DomainException;
 import com.seatreserve.repository.SeatRepository;
 import com.seatreserve.repository.ShowRepository;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +17,11 @@ import java.util.regex.Pattern;
 public class ShowService {
     static final Pattern LABEL = Pattern.compile("[A-Za-z0-9._-]{1,32}");
     static final int MAX_SEATS = 100_000;
+    /**
+     * 10^12 paise (10 billion rupees) per seat. An amount is price x seats and one request may name 50 seats, so
+     * this keeps every amount (at most 5 x 10^13) far inside a 64-bit value instead of overflowing into a 500.
+     */
+    static final long MAX_PRICE_PAISE = 1_000_000_000_000L;
 
     private final ShowRepository shows;
     private final SeatRepository seats;
@@ -28,9 +32,13 @@ public class ShowService {
     }
 
     @Transactional
-    public ShowView create(String name, List<String> labels, long pricePaise, Integer perUserLimit) {
-        if (name == null || name.isBlank()) throw DomainException.bad("invalid-name", "name is required");
-        if (pricePaise < 0) throw DomainException.bad("invalid-price", "price_paise must be >= 0");
+    public ShowView create(String name, List<String> labels, long pricePaise, Integer perUserLimit, Integer holdSeconds) {
+        if (name == null || name.isBlank() || Inputs.hasControlChars(name))
+            throw DomainException.bad("invalid-name", "name is required and must not contain control characters");
+        if (holdSeconds != null && (holdSeconds < 1 || holdSeconds > 86_400))
+            throw DomainException.bad("invalid-hold", "hold_seconds must be between 1 and 86400");
+        if (pricePaise < 0 || pricePaise > MAX_PRICE_PAISE)
+            throw DomainException.bad("invalid-price", "price_paise must be between 0 and " + MAX_PRICE_PAISE);
         if (labels == null || labels.isEmpty() || labels.size() > MAX_SEATS)
             throw DomainException.bad("invalid-seats", "seats must have 1.." + MAX_SEATS + " entries");
         int limit = perUserLimit == null ? 4 : perUserLimit;
@@ -42,11 +50,7 @@ public class ShowService {
             if (!seen.add(s)) throw DomainException.bad("duplicate-seat", "duplicate seat label " + s);
         }
         UUID id = UUID.randomUUID();
-        try {
-            shows.insert(id, name, pricePaise, limit);
-        } catch (DuplicateKeyException e) {
-            throw DomainException.conflict("show-exists", "a show named '" + name + "' already exists");
-        }
+        shows.insert(id, name, pricePaise, limit, holdSeconds); // names are labels, not keys: no uniqueness
         shows.insertSeats(id, labels);
         return get(id);
     }
@@ -65,7 +69,7 @@ public class ShowService {
             }
         }
         var views = statuses.entrySet().stream().map(e -> new SeatView(e.getKey(), e.getValue())).toList();
-        return new ShowView(id, show.name(), show.pricePaise(), show.perUserLimit(), statuses.size(),
-                available, held, confirmed, views);
+        return new ShowView(id, show.name(), show.pricePaise(), show.perUserLimit(), show.holdSeconds(),
+                statuses.size(), available, held, confirmed, views);
     }
 }

@@ -1,5 +1,7 @@
 # Reserve confirms immediately; release is an owner-only cancel
 
+**Status:** still the default. Refined by [ADR 0005](0005-opt-in-time-boxed-holds.md), which adds time-boxed holds as an opt-in per show.
+
 The assignment's reserve example returns `"status": "confirmed"`, and it asks for release as either an explicit cancel or a time-boxed hold, not both. So a successful reserve claims seats as confirmed in one step, and release is `POST /reservations/{id}/cancel`. There is no hold state, TTL, or confirm endpoint. `held` stays a valid seat status in the schema and in `GET /shows/{id}` (always 0 today) so the available + held + confirmed invariant keeps its three-term shape.
 
 ## Considered Options

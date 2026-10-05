@@ -27,6 +27,7 @@ public class SeatMetrics {
     private final JdbcTemplate jdbc;
     private final ProbeDb probe;
     private final Counter confirmed;
+    private final Counter held;
     private final ConcurrentHashMap<UUID, Boolean> tracked = new ConcurrentHashMap<>();
 
     public SeatMetrics(MeterRegistry registry, JdbcTemplate jdbc, ProbeDb probe) {
@@ -35,12 +36,18 @@ public class SeatMetrics {
         this.probe = probe;
         this.confirmed = Counter.builder("reservations.confirmed")
                 .description("Reservations confirmed (seats sold)").register(registry);
+        this.held = Counter.builder("reservations.held")
+                .description("Time-boxed holds placed (shows created with hold_seconds)").register(registry);
         // pre-register so every reason is visible at 0 from the first scrape
         REASONS.forEach(r -> declinedCounter(r));
     }
 
     public void confirmed() {
         confirmed.increment();
+    }
+
+    public void held() {
+        held.increment();
     }
 
     /** Ignores reasons that are not reservation declines (e.g. show-exists), keeping cardinality fixed. */
@@ -59,7 +66,9 @@ public class SeatMetrics {
         Gauge.builder("seats.available", () -> probe.run(j -> {
                     try {
                         Integer n = j.queryForObject(
-                                "select count(*) from seats where show_id = ? and status = 'available'",
+                                // a lapsed hold is available, matching GET /shows/{id}
+                                "select count(*) from seats where show_id = ? and (status = 'available' "
+                                        + "or (status = 'held' and expires_at < clock_timestamp()))",
                                 Integer.class, showId);
                         lastGood[0] = n == null ? 0 : n;
                     } catch (RuntimeException e) {

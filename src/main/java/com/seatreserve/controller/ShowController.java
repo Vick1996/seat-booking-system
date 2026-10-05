@@ -31,7 +31,7 @@ public class ShowController {
     @PreAuthorize("hasRole('ADMIN')") // the email: "POST /shows (admin)"
     public ShowView create(@RequestBody CreateShowRequest req) {
         if (req.pricePaise() == null) throw DomainException.bad("invalid-price", "price_paise is required");
-        var show = shows.create(req.name(), req.seats(), req.pricePaise(), req.perUserLimit());
+        var show = shows.create(req.name(), req.seats(), req.pricePaise(), req.perUserLimit(), req.holdSeconds());
         metrics.trackShow(show.id()); // after commit, so the gauge never reads a half-created show
         return show;
     }

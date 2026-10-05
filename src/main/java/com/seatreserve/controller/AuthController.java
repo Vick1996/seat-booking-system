@@ -4,6 +4,7 @@ import com.seatreserve.config.JwtService;
 import com.seatreserve.config.SeatProperties;
 import com.seatreserve.dto.TokenRequest;
 import com.seatreserve.exception.DomainException;
+import com.seatreserve.service.Inputs;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,8 +26,9 @@ public class AuthController {
 
     @PostMapping("/auth/token")
     public Map<String, Object> token(@RequestBody TokenRequest req) {
-        if (req == null || req.userId() == null || req.userId().isBlank() || req.userId().length() > 128)
-            throw DomainException.bad("invalid-user", "user_id is required (max 128 chars)");
+        if (req == null || req.userId() == null || req.userId().isBlank() || req.userId().length() > 128
+                || Inputs.hasControlChars(req.userId()))
+            throw DomainException.bad("invalid-user", "user_id is required (max 128 chars, no control characters)");
         boolean admin = false;
         if (req.adminKey() != null) {
             boolean ok = MessageDigest.isEqual(req.adminKey().getBytes(StandardCharsets.UTF_8),
