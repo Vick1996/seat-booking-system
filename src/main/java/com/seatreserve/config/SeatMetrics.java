@@ -25,12 +25,14 @@ public class SeatMetrics {
 
     private final MeterRegistry registry;
     private final JdbcTemplate jdbc;
+    private final ProbeDb probe;
     private final Counter confirmed;
     private final ConcurrentHashMap<UUID, Boolean> tracked = new ConcurrentHashMap<>();
 
-    public SeatMetrics(MeterRegistry registry, JdbcTemplate jdbc) {
+    public SeatMetrics(MeterRegistry registry, JdbcTemplate jdbc, ProbeDb probe) {
         this.registry = registry;
         this.jdbc = jdbc;
+        this.probe = probe;
         this.confirmed = Counter.builder("reservations.confirmed")
                 .description("Reservations confirmed (seats sold)").register(registry);
         // pre-register so every reason is visible at 0 from the first scrape
@@ -46,15 +48,25 @@ public class SeatMetrics {
         if (REASONS.contains(reason)) declinedCounter(reason).increment();
     }
 
-    /** Idempotent. The gauge reads the DB on scrape, so it always matches GET /shows/{id}. */
+    /**
+     * Idempotent. The gauge reads the DB on every scrape, so it always matches GET /shows/{id}. It uses the
+     * dedicated probe connection, not the reservation pool: a scrape must not queue behind customers. If the
+     * probe connection is busy or the query fails, the last good value is reported instead of an error.
+     */
     public void trackShow(UUID showId) {
         if (tracked.size() >= MAX_TRACKED_SHOWS || tracked.putIfAbsent(showId, true) != null) return;
-        Gauge.builder("seats.available", () -> {
-                    Integer n = jdbc.queryForObject(
-                            "select count(*) from seats where show_id = ? and status = 'available'",
-                            Integer.class, showId);
-                    return n == null ? 0 : n;
-                })
+        double[] lastGood = {0};
+        Gauge.builder("seats.available", () -> probe.run(j -> {
+                    try {
+                        Integer n = j.queryForObject(
+                                "select count(*) from seats where show_id = ? and status = 'available'",
+                                Integer.class, showId);
+                        lastGood[0] = n == null ? 0 : n;
+                    } catch (RuntimeException e) {
+                        // keep the last good value; a failed scrape must not become an error
+                    }
+                    return lastGood[0];
+                }, lastGood[0]))
                 .tag("show_id", showId.toString())
                 .description("Seats currently available")
                 .register(registry);

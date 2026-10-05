@@ -1,6 +1,12 @@
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  tomcat:
+    # An on-sale stampede opens thousands of connections at once. Tomcat's default backlog of 100 refuses
+    # the overflow at the socket. A large backlog lets waiting clients queue in the kernel instead (it is
+    # capped by net.core.somaxconn, 4096 here). How many connections Tomcat serves at once is sized from
+    # the heap, see ConnectionLimitConfig and seat.max-connections below.
+    accept-count: ${TOMCAT_ACCEPT_COUNT:10000}
 
 spring:
   jackson:
@@ -20,8 +26,10 @@ spring:
       # Sized under the free Postgres connection cap; excess load is shed as 429, never 5xx.
       maximum-pool-size: ${DB_POOL_SIZE:15}
       # Waiting is cheap on virtual threads, so queue generously: losers of a race should get a
-      # clean 409, not a 429. These bounds are the last resort that sheds load as 429 (never 5xx).
-      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:20000}
+      # clean 409, not a 429. 20,000 requests through 15 connections wait a long time (~40s on a
+      # laptop, longer on a small host), and a 20s limit shed 674 of them. This bound is the last
+      # resort that sheds load as 429 (never 5xx), e.g. when the DB is genuinely stuck.
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:120000}
       connection-init-sql: SET lock_timeout='10s'; SET statement_timeout='30s'
       data-source-properties:
         connectTimeout: 5   # seconds; a dead host must not hang a connect
@@ -52,3 +60,5 @@ management:
 seat:
   jwt-secret: ${SEAT_JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
   admin-key: ${SEAT_ADMIN_KEY:dev-admin-key}
+  # 0 = size the concurrent-connection cap from the JVM heap (recommended); a positive number overrides it.
+  max-connections: ${SEAT_MAX_CONNECTIONS:0}

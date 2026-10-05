@@ -110,8 +110,11 @@ public class Burst {
             while (running.get()) {
                 try {
                     int[] c = counts(base, show);
-                    invariantSamples.incrementAndGet();
-                    if (c == null || c[1] + c[2] + c[3] != c[0] || c[0] != total) invariantBreaks.incrementAndGet();
+                    // an unreadable sample (a timed-out read) says nothing about the invariant: skip it
+                    if (c != null) {
+                        invariantSamples.incrementAndGet();
+                        if (c[1] + c[2] + c[3] != c[0] || c[0] != total) invariantBreaks.incrementAndGet();
+                    }
                     Thread.sleep(500);
                 } catch (Exception ignored) {
                     // a failed sample is not a broken invariant; the final check is authoritative
@@ -164,7 +167,15 @@ public class Burst {
         List<String> badHot = new ArrayList<>();
         for (int i = 1; i <= hot; i++) if (sold.getOrDefault("H" + i, 0) != 1) badHot.add("H" + i + "=" + sold.getOrDefault("H" + i, 0));
 
-        int[] fin = counts(base, show);
+        // A service that just buckled may need a moment before it can answer a read. Retry, and if it
+        // still cannot, report that as a failure instead of crashing on a null.
+        int[] fin = null;
+        for (int attempt = 0; attempt < 15 && fin == null; attempt++) {
+            fin = counts(base, show);
+            if (fin == null) Thread.sleep(2_000);
+        }
+        boolean finalStateUnreadable = fin == null;
+        if (finalStateUnreadable) fin = new int[]{-1, -1, -1, -1};
         Map<String, Double> after = metrics(base);
 
         System.out.printf("%n== outcome distribution (%d responses in %.1fs, %.0f req/s) ==%n", outcomes.size(), secs, outcomes.size() / secs);
@@ -185,9 +196,15 @@ public class Burst {
         if (doubleSold > 0) failures.add(doubleSold + " seat(s) sold to more than one reservation");
         if (!badHot.isEmpty()) failures.add("hot seats must have exactly one winner: " + badHot);
         if (c5xx > 0) failures.add(c5xx + " responses were 5xx");
-        if (fin[0] != total || fin[1] + fin[2] + fin[3] != fin[0]) failures.add("available+held+confirmed != total_seats");
+        if (finalStateUnreadable) failures.add("could not read GET /shows/{id} after the burst (service unresponsive?)");
+        else if (fin[0] != total || fin[1] + fin[2] + fin[3] != fin[0]) failures.add("available+held+confirmed != total_seats");
         if (invariantBreaks.get() > 0) failures.add("invariant broke during the burst");
-        if (fin[3] != sellable) failures.add("confirmed seats (" + fin[3] + ") != seats in 201 responses (" + sellable + ")");
+        // Only comparable when every reply arrived: a timed-out request may have been confirmed
+        // server-side with its 201 lost in transit, which is not a double-sell.
+        if (!finalStateUnreadable && transport == 0 && fin[3] != sellable)
+            failures.add("confirmed seats (" + fin[3] + ") != seats in 201 responses (" + sellable + ")");
+        if (transport > 0)
+            System.out.printf("  note: confirmed-vs-201 comparison skipped, %d replies were lost in transit%n", transport);
         if (transport > 0) failures.add(transport + " requests failed at transport level (timeouts/refused)");
 
         if (before != null && after != null) {

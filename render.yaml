@@ -10,8 +10,10 @@ services:
     name: seat-reservation
     runtime: docker
     plan: free
-    # Readiness checks the DB and fails closed; Render only routes traffic once it is 200.
-    healthCheckPath: /actuator/health/readiness
+    # Render's single health check can stop routing (after 15s of failures) and restart the instance (60s),
+    # so it must be shallow: process-only liveness, which never depends on the DB or on how busy we are.
+    # /readyz stays the deep, fail-closed database check that the assignment asks for.
+    healthCheckPath: /healthz
     envVars:
       - key: DB_HOST
         fromDatabase: { name: seats-db, property: host }

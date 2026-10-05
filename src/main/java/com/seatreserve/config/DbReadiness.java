@@ -2,39 +2,33 @@ package com.seatreserve.config;
 
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-
 /**
- * Readiness that fails closed AND fast. The stock db indicator borrows from the pool, which can
- * block for the full connection timeout (or forever on a hung socket), so an orchestrator probe
- * would time out instead of seeing a clean 503. Here the check runs under a hard deadline.
+ * Readiness that fails closed and fast, and measures "can I reach the database", not "is the reservation
+ * pool free". It uses {@link ProbeDb}, so a saturated pool cannot turn a busy service into a "not ready"
+ * one. The check is bounded by ProbeDb's connect and socket timeouts (well under a platform's 5s limit).
  */
 @Component("seatDb")
 public class DbReadiness implements HealthIndicator {
-    private static final long DEADLINE_MS = 2_000;
-    private final JdbcTemplate jdbc;
-    private final ExecutorService probes = Executors.newVirtualThreadPerTaskExecutor();
+    private final ProbeDb probe;
+    private volatile Health last = Health.down().withDetail("reason", "no probe has completed yet").build();
 
-    public DbReadiness(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    public DbReadiness(ProbeDb probe) {
+        this.probe = probe;
     }
 
     @Override
     public Health health() {
-        Future<Integer> f = probes.submit(() -> jdbc.queryForObject("select 1", Integer.class));
-        try {
-            f.get(DEADLINE_MS, TimeUnit.MILLISECONDS);
-            return Health.up().build();
-        } catch (Exception e) {
-            f.cancel(true);
-            return Health.down().withDetail("reason", e instanceof java.util.concurrent.TimeoutException
-                    ? "database did not answer within " + DEADLINE_MS + "ms" : "database unreachable").build();
-        }
+        // when another probe is already running, reuse its latest answer instead of opening a second session
+        return probe.run(jdbc -> {
+            try {
+                jdbc.queryForObject("select 1", Integer.class);
+                last = Health.up().build();
+            } catch (RuntimeException e) {
+                last = Health.down().withDetail("reason", "database unreachable").build();
+            }
+            return last;
+        }, last);
     }
 }

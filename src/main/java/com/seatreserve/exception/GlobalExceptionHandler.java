@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.ErrorResponse;
@@ -45,6 +46,24 @@ public class GlobalExceptionHandler {
         log.warn("shedding load as 429: {}", e.toString());
         metrics.declined("overloaded");
         return body(HttpStatus.TOO_MANY_REQUESTS, "overloaded", "server is busy, retry with the same idempotency key");
+    }
+
+    /**
+     * Spring does not translate Postgres's own saturation errors, so they arrive as an uncategorized
+     * exception and would fall through to the 500 below. Measured at 0.1 CPU: five 500s, all
+     * "canceling statement due to lock timeout". These SQLStates are saturation, shed as 429 like the rest.
+     */
+    private static final java.util.Set<String> SATURATION_SQLSTATES = java.util.Set.of(
+            "55P03",  // lock_not_available: lock_timeout expired
+            "57014",  // query_canceled: statement_timeout expired
+            "40P01",  // deadlock_detected
+            "40001"); // serialization_failure
+
+    @ExceptionHandler(UncategorizedSQLException.class)
+    ResponseEntity<Map<String, Object>> uncategorized(UncategorizedSQLException e) {
+        var cause = e.getSQLException();
+        if (cause != null && SATURATION_SQLSTATES.contains(cause.getSQLState())) return overloaded(e);
+        return unexpected(e);
     }
 
     /**

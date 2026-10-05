@@ -120,4 +120,4 @@ Behaviour that is documented and tested:
 3. Nothing to enter: `SEAT_JWT_SECRET` is generated (private), and `SEAT_ADMIN_KEY` is fixed to the documented demo key in `render.yaml`, so reviewers can create shows with no out-of-band step.
 4. Wait for the first deploy; the health check is `/actuator/health/readiness`.
 
-Free tier notes: the web service sleeps after ~15 min idle (cold start ~1 min; the burst runner waits for readiness), and the free Postgres has a low connection cap, so the pool is capped at 15 (`DB_POOL_SIZE`).
+Free tier notes: the web service sleeps after ~15 min idle (cold start ~1 min; the burst runner waits for readiness), and the free Postgres has a low connection cap, so the pool is capped at 15 (`DB_POOL_SIZE`). The number of concurrent connections is capped from the JVM heap (`SEAT_MAX_CONNECTIONS` overrides it): a 512MB instance fully serves about 1,000 simultaneous clients, and beyond its cap clients wait in the kernel's queue rather than crashing the service. See "Capacity and failure behaviour" in `WRITEUP.md`.

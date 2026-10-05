@@ -1,0 +1,7 @@
+# Allow-list: the Dockerfile only needs these. Everything else (.git, target/, docs, IDE files)
+# stays out of the build context, so builds upload less and nothing stray can be copied in.
+*
+!.mvn
+!mvnw
+!pom.xml
+!src

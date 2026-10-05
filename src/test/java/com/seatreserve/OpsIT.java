@@ -71,6 +71,55 @@ class OpsIT {
         assertEquals(200, code, "ready again once the DB is back");
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    javax.sql.DataSource dataSource;
+
+    @Test
+    void readinessAndMetrics_answerEvenWhenEveryPooledConnectionIsBusy() throws Exception {
+        // a show first, so a seats_available gauge exists
+        String adminToken = tokenOf(post("/auth/token", null, "{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}"));
+        assertEquals(201, statusOf(post("/shows", adminToken,
+                "{\"name\":\"pool-" + java.util.UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\",\"A2\"]}")));
+
+        int poolSize = ((com.zaxxer.hikari.HikariDataSource) dataSource).getMaximumPoolSize();
+        var held = new java.util.ArrayList<java.sql.Connection>();
+        try {
+            for (int i = 0; i < poolSize; i++) held.add(dataSource.getConnection()); // the reservation pool is now exhausted
+
+            long t0 = System.nanoTime();
+            var ready = send("/readyz", null, Duration.ofSeconds(6));
+            long readyMs = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(200, ready.statusCode(), "readiness asks 'can I reach the DB', not 'is the pool free': " + ready.body());
+            assertTrue(readyMs < 1500, "and answers promptly: " + readyMs + "ms");
+
+            t0 = System.nanoTime();
+            var metrics = send("/metrics", null, Duration.ofSeconds(6));
+            long metricsMs = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(200, metrics.statusCode());
+            assertTrue(metrics.body().contains("seats_available"), "the gauge is still reported");
+            assertTrue(metricsMs < 1500, "a scrape must not queue behind customers: " + metricsMs + "ms");
+        } finally {
+            for (var c : held) c.close();
+        }
+    }
+
+    HttpResponse<String> post(String path, String token, String body) throws Exception {
+        var b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body));
+        if (token != null) b.header("Authorization", "Bearer " + token);
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    static int statusOf(HttpResponse<String> r) {
+        return r.statusCode();
+    }
+
+    static String tokenOf(HttpResponse<String> r) {
+        var m = java.util.regex.Pattern.compile("\"token\":\"([^\"]+)\"").matcher(r.body());
+        m.find();
+        return m.group(1);
+    }
+
     @Test
     void conventionalOpsPaths_workWithoutAToken() throws Exception {
         // the email names no paths, so a checker will try the usual ones
