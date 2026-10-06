@@ -105,6 +105,15 @@ class ValidationIT {
     }
 
     @Test
+    void aShowMayHoldExactlyTheMaximumNumberOfSeats() throws Exception {
+        String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
+        String seats = String.join(",", java.util.stream.IntStream.rangeClosed(1, 500).mapToObj(i -> "\"S" + i + "\"").toList());
+        var show = post("/shows", admin, "{\"name\":\"full-hall-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[" + seats + "]}");
+        assertEquals(201, show.statusCode(), "500 seats is the limit, and it is allowed: " + show.body());
+        assertTrue(show.body().contains("\"total_seats\":500"), "every seat is created");
+    }
+
+    @Test
     void thePriceCap_leavesRoomToReserveTheMostSeatsOneRequestAllows() throws Exception {
         // at the cap, the largest request (50 seats) must not overflow a 64-bit amount
         String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
@@ -165,7 +174,7 @@ class ValidationIT {
     @Test
     void createShowRejectsBadInput_withClientErrors() throws Exception {
         String admin = token("{\"user_id\":\"admin\",\"admin_key\":\"dev-admin-key\"}");
-        String tooMany = String.join(",", java.util.stream.IntStream.rangeClosed(1, 100_001).mapToObj(i -> "\"S" + i + "\"").toList());
+        String tooMany = String.join(",", java.util.stream.IntStream.rangeClosed(1, 501).mapToObj(i -> "\"S" + i + "\"").toList());
 
         Object[][] cases = {
                 {"name containing a NUL (Postgres cannot store it)", "{\"name\":\"a\\u0000b\",\"price_paise\":100,\"seats\":[\"A1\"]}", 400},
@@ -189,7 +198,7 @@ class ValidationIT {
                 {"hold_seconds negative", "{\"name\":\"n21-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":-5}", 400},
                 {"hold_seconds over a day", "{\"name\":\"n22-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":86401}", 400},
                 {"fractional hold_seconds", "{\"name\":\"n23-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[\"A1\"],\"hold_seconds\":1.5}", 400},
-                {"more than 100000 seats", "{\"name\":\"n12-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[" + tooMany + "]}", 400},
+                {"more than 500 seats (a cinema or theatre hall is the largest show)", "{\"name\":\"n12-" + UUID.randomUUID() + "\",\"price_paise\":100,\"seats\":[" + tooMany + "]}", 400},
                 {"malformed json", "{\"name\":", 400},
                 {"empty body", "", 400},
         };

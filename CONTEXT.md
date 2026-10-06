@@ -5,7 +5,7 @@ A service that is the system of record for who owns each seat of an event, decid
 ## Language
 
 **Show**:
-An event with a fixed set of numbered seats and one price per seat. Its name is only a label: two shows may share one.
+An event with a fixed set of numbered seats and one price per seat, sized like a cinema or theatre hall (at most 500 seats). Its name is only a label: two shows may share one.
 _Avoid_: Event, concert, screening
 
 **Seat**:

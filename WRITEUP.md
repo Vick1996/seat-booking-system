@@ -71,6 +71,8 @@ What this does not do: a small instance serves a few hundred requests per second
 
 Fixed setup for every number below: app container on 2 CPUs and 1GB, Postgres unconstrained on an 8-CPU Docker VM, 20,000 requests with 1,000 in flight, fired from inside the Docker network. The first run of each series is discarded (JIT warm-up), the database is wiped between images, and the order was reversed once to rule out an order effect. Run-to-run noise is about 10%, so read these as direction.
 
+A show is capped at 500 seats (a cinema or theatre hall). The 5,003-seat mix below was measured before that cap existed and is kept as the harder case for the database; the 503-seat mix is the one closest to what the cap now allows.
+
 | | Before | After |
 |---|---|---|
 | Original mix (5,003 seats): throughput | 823 req/s | **1,052 req/s (+28%)** |

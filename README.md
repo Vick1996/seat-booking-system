@@ -71,7 +71,7 @@ Needs only a JDK 17+ (single-file program, no build). It creates a fresh show, t
 - confirmed seats in `GET /shows/{id}` differ from the seats in the 201 responses
 - (reported, not failing, because other clients may share the service) metric deltas versus responses observed
 
-Tunables: `BURST_REQUESTS` (20000) `BURST_USERS` (2000) `BURST_SEATS` (5000) `BURST_HOT` (3) `BURST_CONCURRENCY` (1000) `BURST_ADMIN_KEY` (`dev-admin-key`).
+Tunables: `BURST_REQUESTS` (20000) `BURST_USERS` (2000) `BURST_SEATS` (497, plus 3 hot seats = the 500-seat maximum) `BURST_HOT` (3) `BURST_CONCURRENCY` (1000) `BURST_ADMIN_KEY` (`dev-admin-key`).
 
 > Docker Desktop on Windows/macOS can refuse a flood of simultaneous connections at its own port proxy (`Connection refused` before the app sees the request). The app is not involved: the same burst run from inside the Docker network shows zero errors. If you see this locally, lower `BURST_CONCURRENCY` to ~200.
 
@@ -104,7 +104,7 @@ Behaviour that is documented and tested:
 
 - **Money** is integer paise. `amount_paise = price_paise * seat_count`. `price_paise` may be at most 1,000,000,000,000 (10^12), so the largest request (50 seats) can never overflow a 64-bit amount.
 - **Show names are labels, not keys.** Two shows may share a name (the email's own example is `"friday-night"`); every show gets its own `id`.
-- **Input limits** (all breaches are a `400`): seat labels match `[A-Za-z0-9._-]{1,32}`, at most 100,000 seats per show and 50 per reserve request; names, user ids and idempotency keys must not contain control characters (NUL, newlines, tabs). Anything else Postgres refuses to store is also a `400`, never a `500`.
+- **Input limits** (all breaches are a `400`): seat labels match `[A-Za-z0-9._-]{1,32}`, at most **500 seats per show** (a cinema or theatre hall, not a stadium; a larger request is a mistake) and 50 per reserve request; names, user ids and idempotency keys must not contain control characters (NUL, newlines, tabs). Anything else Postgres refuses to store is also a `400`, never a `500`.
 - **Multi-seat is all-or-nothing.** If any requested seat is taken, the whole request is a 409 and nothing is held.
 - **Declines are 409** with a machine-readable `reason`: `seat-taken`, `per-user-limit`, `idempotency-conflict`. Same key + same seats is a replay (200); same key + different seats is a 409.
 - **Release, two ways.** Owner-only cancel always works. In addition, a show created with `hold_seconds` makes reserve place a **hold** (`201`, `status: "held"`, plus `expires_at`) that the owner must confirm before it lapses. A lapsed hold is free again **at once**: another user can reserve it, `GET /shows/{id}` reports it as `available`, and it stops counting toward the per-user limit. Correctness does not depend on a background job; a sweeper (every 10s) only tidies the reservation's status to `expired`.

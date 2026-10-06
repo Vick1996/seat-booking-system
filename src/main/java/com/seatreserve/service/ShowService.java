@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
 @Service
 public class ShowService {
     static final Pattern LABEL = Pattern.compile("[A-Za-z0-9._-]{1,32}");
-    static final int MAX_SEATS = 100_000;
+    /** A show is a cinema or theatre hall, not a stadium: no real one has thousands of seats, so a larger request is a mistake. */
+    static final int MAX_SEATS = 500;
     /**
      * 10^12 paise (10 billion rupees) per seat. An amount is price x seats and one request may name 50 seats, so
      * this keeps every amount (at most 5 x 10^13) far inside a 64-bit value instead of overflowing into a 500.

@@ -16,7 +16,7 @@ import java.util.regex.*;
  * seat, zero 5xx, available+held+confirmed == total (sampled DURING the burst and after), and
  * confirmed seats == seats in the 201 responses. Exit code 1 if any correctness check fails.
  *
- * Tunables (env): BURST_REQUESTS=20000 BURST_USERS=2000 BURST_SEATS=5000 BURST_HOT=3
+ * Tunables (env): BURST_REQUESTS=20000 BURST_USERS=2000 BURST_SEATS=497 BURST_HOT=3
  *                 BURST_CONCURRENCY=1000 BURST_ADMIN_KEY=dev-admin-key BURST_SEED=42
  */
 public class Burst {
@@ -41,7 +41,8 @@ public class Burst {
         }
         String base = args[0].replaceAll("/+$", "");
         int requests = env("BURST_REQUESTS", 20_000), users = env("BURST_USERS", 2_000);
-        int seatCount = env("BURST_SEATS", 5_000), hot = env("BURST_HOT", 3);
+        // 3 hot seats + 497 = 500, the largest show the service allows (a cinema or theatre hall)
+        int seatCount = env("BURST_SEATS", 497), hot = env("BURST_HOT", 3);
         int concurrency = env("BURST_CONCURRENCY", 1_000), seed = env("BURST_SEED", 42);
         String adminKey = Optional.ofNullable(System.getenv("BURST_ADMIN_KEY")).orElse("dev-admin-key");
 
