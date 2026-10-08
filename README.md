@@ -2,7 +2,7 @@
 
 JSON HTTP API that sells assigned seats and stays correct when thousands of buyers hit the same show at once: no seat sold twice, per-user limit enforced, retries counted once, zero 5xx.
 
-**Live URL:** `<LIVE_URL>` (fill in after deploying) · **Metrics:** `<LIVE_URL>/actuator/prometheus` · **Health:** `<LIVE_URL>/actuator/health/readiness`
+**Live URL:** https://seat-reservation-s7ac.onrender.com · **Metrics:** https://seat-reservation-s7ac.onrender.com/metrics · **Health:** https://seat-reservation-s7ac.onrender.com/actuator/health/readiness
 
 Stack: Java 21, Spring Boot 3.5, PostgreSQL 16, Flyway. Design notes in [WRITEUP.md](WRITEUP.md), vocabulary in [CONTEXT.md](CONTEXT.md), decisions in [docs/adr](docs/adr).
 
@@ -60,7 +60,7 @@ curl -s -o /dev/null -w "alice cancels: %{http_code}\n" -X POST $URL/reservation
 ## One-command burst
 
 ```sh
-./burst.sh http://localhost:8080          # or: make burst BASE_URL=<LIVE_URL>
+./burst.sh https://seat-reservation-s7ac.onrender.com        
 ```
 
 Needs only a JDK 17+ (single-file program, no build). It creates a fresh show, then fires 20,000 requests: a **hot-seat storm** (40%, three hot seats, many users each), spread single seats, multi-seat pairs, and **same-key retries** (10%). It prints the outcome distribution (confirmed / declined by reason / 5xx) and the reconciliation, and **exits 1** if any of these fail:
