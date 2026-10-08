@@ -121,6 +121,19 @@ class OpsIT {
     }
 
     @Test
+    void recentLogs_arePublic_andCarryTheRequestId() throws Exception {
+        String id = "logtest-" + java.util.UUID.randomUUID();
+        var req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/shows/" + java.util.UUID.randomUUID()))
+                .header("X-Request-Id", id).GET().build();
+        assertEquals(404, http.send(req, HttpResponse.BodyHandlers.ofString()).statusCode());
+
+        var logs = send("/ops/logs?lines=50", null, Duration.ofSeconds(5)); // no token
+        assertEquals(200, logs.statusCode());
+        assertTrue(logs.body().contains(id), "the access line for that request, correlated by id");
+        assertTrue(logs.body().lines().allMatch(l -> l.isBlank() || l.startsWith("{")), "structured JSON, one object per line");
+    }
+
+    @Test
     void conventionalOpsPaths_workWithoutAToken() throws Exception {
         // the email names no paths, so a checker will try the usual ones
         var live = send("/healthz", null, Duration.ofSeconds(5));

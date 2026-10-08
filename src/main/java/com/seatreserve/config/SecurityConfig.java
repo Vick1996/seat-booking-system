@@ -64,7 +64,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a // first match wins, so order matters
                         // /error: without it a container-level error is itself rejected with a 401
                         .requestMatchers("/auth/**", "/actuator/**", "/error").permitAll()
-                        .requestMatchers("/healthz", "/readyz", "/metrics").permitAll() // see OpsController
+                        .requestMatchers("/healthz", "/readyz", "/metrics", "/ops/logs").permitAll() // see OpsController
                         .requestMatchers(HttpMethod.GET, "/shows/*").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(o -> o

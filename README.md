@@ -115,7 +115,7 @@ Behaviour that is documented and tested:
 
 - `GET /healthz` (liveness: process up) and `GET /readyz` (readiness: DB reachable, **fails closed with 503** within 2 s, even if the DB hangs). Same checks as `/actuator/health/liveness` and `/actuator/health/readiness`. No token needed.
 - `GET /metrics` (also `/actuator/prometheus`): `reservations_confirmed_total`, `reservations_declined_total{reason="seat-taken|per-user-limit|idempotent-replay|idempotency-conflict|overloaded"}`, `seats_available{show_id}`. Counters are bumped after commit and reconcile with the API; the burst checks it.
-- Logs are structured JSON on stdout with a `request_id` on every line (also returned as `X-Request-Id`; send your own to correlate), and one access line per request. On Render: dashboard > Logs.
+- Logs are structured JSON on stdout with a `request_id` on every line (also returned as `X-Request-Id`; send your own to correlate), and one access line per request. Public, no token: `GET /ops/logs?lines=200` returns the most recent lines (default 200, max 1000; the same JSON, also written to a size-capped file). Try `curl -H 'X-Request-Id: my-probe' $URL/shows/x` then look for `my-probe` in `/ops/logs`. On Render the full stream is also in dashboard > Logs.
 
 ## Deploy (Render, free tier)
 

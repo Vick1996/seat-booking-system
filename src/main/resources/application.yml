@@ -38,9 +38,19 @@ spring:
     enabled: true
 
 logging:
+  # The same JSON also goes to a file, so GET /ops/logs can serve the recent lines publicly (the platform
+  # offers no public log view). Size-capped, so it cannot fill the disk.
+  file:
+    name: ${SEAT_LOG_FILE:${java.io.tmpdir}/seat-reservation.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      total-size-cap: 20MB
+      max-history: 1
   structured:
     format:
       console: ecs # JSON; MDC (request_id, user_id) is included automatically
+      file: ecs
 
 management:
   endpoints:
